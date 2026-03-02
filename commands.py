@@ -546,6 +546,130 @@ async def cmd_setcoingecko(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"❌ Failed to save CoinGecko URL: {e}")
 
 
+async def cmd_api_manager(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: Unified API key management dashboard.
+    Usage:
+      /api status - Show which API keys are configured
+      /api setbybit <key> <secret> - Set Bybit API
+      /api setgemini <key> - Set Gemini API
+      /api setgroq <key> - Set Groq API
+      /api setcoingecko <url> - Set CoinGecko URL
+    """
+    user_id = update.effective_user.id
+    owner = os.getenv('OWNER_TELEGRAM_ID')
+    try:
+        owner_id = int(owner) if owner else None
+    except Exception:
+        owner_id = None
+
+    if owner_id is None or user_id != owner_id:
+        await update.message.reply_text("❌ Unauthorized. Only the bot owner can manage API keys.")
+        return
+
+    if not context.args:
+        # Show status
+        bybit_key = "✅ SET" if os.getenv('BYBIT_API_KEY') else "❌ NOT SET"
+        gemini_key = "✅ SET" if os.getenv('GEMINI_API_KEY') else "❌ NOT SET"
+        groq_key = "✅ SET" if os.getenv('GROQ_API_KEY') else "❌ NOT SET"
+        coingecko_url = os.getenv('COINGECKO_API_URL', 'NOT SET')
+        
+        msg = (
+            "🔑 **API Keys Status**\n\n"
+            f"**Bybit:** {bybit_key}\n"
+            f"**Gemini:** {gemini_key}\n"
+            f"**Groq:** {groq_key}\n"
+            f"**CoinGecko:** ✅ SET (public API)\n\n"
+            "**Commands:**\n"
+            "/api setbybit <key> <secret>\n"
+            "/api setgemini <key>\n"
+            "/api setgroq <key>\n"
+            "/api setcoingecko <url>\n"
+            "/reinit - Apply changes without restart\n"
+        )
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        return
+
+    action = context.args[0].lower()
+
+    if action == 'status':
+        bybit_key = "✅ SET" if os.getenv('BYBIT_API_KEY') else "❌ NOT SET"
+        gemini_key = "✅ SET" if os.getenv('GEMINI_API_KEY') else "❌ NOT SET"
+        groq_key = "✅ SET" if os.getenv('GROQ_API_KEY') else "❌ NOT SET"
+        
+        msg = (
+            "🔑 **API Keys Status**\n\n"
+            f"**Bybit:** {bybit_key}\n"
+            f"**Gemini:** {gemini_key}\n"
+            f"**Groq:** {groq_key}\n"
+            f"**CoinGecko:** ✅ SET (public API)\n"
+        )
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
+    elif action == 'setbybit':
+        if len(context.args) < 3:
+            await update.message.reply_text("Usage: /api setbybit <API_KEY> <API_SECRET>")
+            return
+        api_key = context.args[1].strip()
+        api_secret = context.args[2].strip()
+        dotenv_path = os.path.join(os.getcwd(), '.env')
+        try:
+            dotenv.set_key(dotenv_path, 'BYBIT_API_KEY', api_key)
+            dotenv.set_key(dotenv_path, 'BYBIT_API_SECRET', api_secret)
+            os.environ['BYBIT_API_KEY'] = api_key
+            os.environ['BYBIT_API_SECRET'] = api_secret
+            await update.message.reply_text("✅ Bybit keys saved. Use /reinit to apply without restart.")
+            logger.info("Bybit API keys updated via /api by owner")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed: {e}")
+
+    elif action == 'setgemini':
+        if len(context.args) < 2:
+            await update.message.reply_text("Usage: /api setgemini <API_KEY>")
+            return
+        api_key = context.args[1].strip()
+        dotenv_path = os.path.join(os.getcwd(), '.env')
+        try:
+            dotenv.set_key(dotenv_path, 'GEMINI_API_KEY', api_key)
+            os.environ['GEMINI_API_KEY'] = api_key
+            await update.message.reply_text("✅ Gemini key saved. Use /reinit to apply without restart.")
+            logger.info("Gemini API key updated via /api by owner")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed: {e}")
+
+    elif action == 'setgroq':
+        if len(context.args) < 2:
+            await update.message.reply_text("Usage: /api setgroq <API_KEY>")
+            return
+        api_key = context.args[1].strip()
+        dotenv_path = os.path.join(os.getcwd(), '.env')
+        try:
+            dotenv.set_key(dotenv_path, 'GROQ_API_KEY', api_key)
+            os.environ['GROQ_API_KEY'] = api_key
+            await update.message.reply_text("✅ Groq key saved. Use /reinit to apply without restart.")
+            logger.info("Groq API key updated via /api by owner")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed: {e}")
+
+    elif action == 'setcoingecko':
+        if len(context.args) < 2:
+            await update.message.reply_text("Usage: /api setcoingecko <API_URL>")
+            return
+        api_url = context.args[1].strip()
+        dotenv_path = os.path.join(os.getcwd(), '.env')
+        try:
+            dotenv.set_key(dotenv_path, 'COINGECKO_API_URL', api_url)
+            os.environ['COINGECKO_API_URL'] = api_url
+            await update.message.reply_text("✅ CoinGecko URL saved.")
+            logger.info("CoinGecko API URL updated via /api by owner")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed: {e}")
+    
+    else:
+        await update.message.reply_text(
+            "❌ Unknown action. Use `/api status` or `/api setbybit|setgemini|setgroq|setcoingecko`"
+        )
+
+
 async def cmd_reinit_trader(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Owner-only: Re-initialize the Bybit trader in-process so new keys apply without restart."""
     user_id = update.effective_user.id

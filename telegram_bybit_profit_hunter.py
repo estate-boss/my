@@ -571,6 +571,7 @@ async def setup_telegram_handlers(app: Application) -> None:
     app.add_handler(CommandHandler('risk', commands.cmd_risk))
     app.add_handler(CommandHandler('setbybit', commands.cmd_setbybit))
     app.add_handler(CommandHandler('reinit', commands.cmd_reinit_trader))
+    app.add_handler(CommandHandler('api', commands.cmd_api_manager))
     app.add_handler(CommandHandler('addwatch', commands.cmd_addwatch))
     app.add_handler(CommandHandler('watchlist', commands.cmd_watchlist))
     app.add_handler(CommandHandler('reinvest', commands.cmd_reinvest))
