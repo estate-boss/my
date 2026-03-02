@@ -329,6 +329,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/resume - Resume trading loop\n"
         "/kill - Close all + shutdown\n\n"
         
+        "*Mode Control*\n"
+        "/papermode - Switch to paper (simulated trades)\n"
+        "/livemode - Switch to live (real money ⚠️)\n"
+        "/confirm_live - Confirm live mode switchover\n\n"
+        
         "*AI & Signals*\n"
         "/signals - Get top 3 AI trading signals (long/short)\n\n"
         
@@ -679,6 +684,121 @@ async def cmd_api_manager(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(
             "❌ Unknown action. Use `/api status` or `/api setbybit|setgemini|setgroq|setcoingecko`"
         )
+
+
+async def cmd_papermode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: Switch bot to PAPER MODE (simulated trades, safe testing)."""
+    user_id = update.effective_user.id
+    owner = os.getenv('OWNER_TELEGRAM_ID')
+    try:
+        owner_id = int(owner) if owner else None
+    except Exception:
+        owner_id = None
+
+    if owner_id is None or user_id != owner_id:
+        await update.message.reply_text("❌ Unauthorized. Only the bot owner can change modes.")
+        return
+
+    dotenv_path = os.path.join(os.getcwd(), '.env')
+    try:
+        dotenv.set_key(dotenv_path, 'PAPER_MODE', 'true')
+        os.environ['PAPER_MODE'] = 'true'
+        msg = (
+            "📰 **PAPER MODE ENABLED**\n\n"
+            "✅ All trades are simulated (no real money)\n"
+            "Great for testing and learning.\n\n"
+            "Restart the bot or use `/reinit` to apply."
+        )
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        logger.warning("Bot switched to PAPER MODE by owner")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed: {e}")
+
+
+async def cmd_livemode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: Switch bot to LIVE MODE (real trading with real money ⚠️)."""
+    user_id = update.effective_user.id
+    owner = os.getenv('OWNER_TELEGRAM_ID')
+    try:
+        owner_id = int(owner) if owner else None
+    except Exception:
+        owner_id = None
+
+    if owner_id is None or user_id != owner_id:
+        await update.message.reply_text("❌ Unauthorized. Only the bot owner can change modes.")
+        return
+
+    # Check if Bybit API keys are set
+    bybit_key = os.getenv('BYBIT_API_KEY', '').strip()
+    bybit_secret = os.getenv('BYBIT_API_SECRET', '').strip()
+
+    if not bybit_key or not bybit_secret:
+        msg = (
+            "❌ **Cannot enable LIVE MODE**\n\n"
+            "Bybit API keys are not set.\n"
+            "Use `/api setbybit <key> <secret>` first.\n\n"
+            "⚠️ Recommended: Test on testnet (free) before going live."
+        )
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        return
+
+    # Warn user
+    msg = (
+        "⚠️ **EXTREME RISK WARNING**\n\n"
+        "🔴 **LIVE MODE WILL TRADE WITH REAL MONEY**\n"
+        "• Leverage liquidation risk = total loss\n"
+        "• Main coins only (BTC, ETH, SOL, ...)\n"
+        "• Min $20 balance | Max 2% position size\n"
+        "• 60% profits extracted; 40% reinvested\n\n"
+        "You are responsible for ALL losses.\n\n"
+        "Send: /confirm_live to activate (expires in 60 sec)\n"
+        "Or: /papermode to stay safe"
+    )
+    await update.message.reply_text(msg, parse_mode='Markdown')
+    
+    # Store confirmation request in context
+    context.user_data['live_mode_pending'] = True
+    logger.warning(f"LIVE MODE CONFIRMATION REQUESTED by user {user_id}")
+
+
+async def cmd_confirm_livemode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Confirm and enable LIVE MODE (must be called within 60 sec of /livemode)."""
+    user_id = update.effective_user.id
+    owner = os.getenv('OWNER_TELEGRAM_ID')
+    try:
+        owner_id = int(owner) if owner else None
+    except Exception:
+        owner_id = None
+
+    if owner_id is None or user_id != owner_id:
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    if not context.user_data.get('live_mode_pending'):
+        await update.message.reply_text("❌ No live mode request pending. Use `/livemode` first.")
+        return
+
+    # Enable live mode
+    dotenv_path = os.path.join(os.getcwd(), '.env')
+    try:
+        dotenv.set_key(dotenv_path, 'PAPER_MODE', 'false')
+        os.environ['PAPER_MODE'] = 'false'
+        context.user_data['live_mode_pending'] = False
+        
+        msg = (
+            "🔴 **LIVE MODE ENABLED**\n\n"
+            "⚠️ **TRADING WITH REAL MONEY NOW**\n"
+            "Monitor trades closely!\n\n"
+            "Commands:\n"
+            "/status - Check balance + open trades\n"
+            "/pause - Stop trading\n"
+            "/papermode - Go back to simulation\n\n"
+            "Restart bot or use `/reinit` to apply."
+        )
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        logger.error("⚠️ BOT SWITCHED TO LIVE MODE BY OWNER - REAL MONEY TRADING ACTIVE")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed: {e}")
 
 
 async def cmd_top_signals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
