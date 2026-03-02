@@ -605,8 +605,16 @@ async def main() -> None:
     except Exception:
         logger.warning("Could not set BOT_INSTANCE on commands module")
     
-    # Telegram application
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Telegram application with optimized polling
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .read_timeout(5)
+        .write_timeout(10)
+        .connect_timeout(5)
+        .pool_timeout(5)
+        .build()
+    )
     await setup_telegram_handlers(app)
     
     # Start bot in background task
@@ -614,10 +622,10 @@ async def main() -> None:
         # Start trading loop as background task
         trading_task = asyncio.create_task(bot.run_trading_loop())
         
-        # Start Telegram polling
+        # Start Telegram polling with fast timeout and update filtering
         async with app:
             await app.initialize()
-            await app.start()
+            await app.start(allowed_updates=['message', 'callback_query', 'my_chat_member'])
             
             # Run until stopped
             await asyncio.Event().wait()

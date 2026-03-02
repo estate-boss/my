@@ -2,6 +2,7 @@
 Telegram commands handler: /start, /pause, /resume, /history, /status, /tax, /kill, etc.
 """
 import logging
+import asyncio
 from typing import Optional
 from datetime import datetime
 import pytz
@@ -19,6 +20,16 @@ logger = logging.getLogger(__name__)
 
 WAT = pytz.timezone('Africa/Lagos')
 
+# Global BOT_INSTANCE for runtime operations
+BOT_INSTANCE = None
+
+
+# Helper: run blocking db operations in thread pool to avoid blocking event loop
+async def _run_in_thread(fn, *args, **kwargs):
+    """Wrapper to run blocking sync functions in asyncio thread pool."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+
 
 # Conversation states
 CONF_SETTING, LEV_MODE, PAUSE_AFTER, RISK_PRESET, WATCH_SYMBOL, REINVEST_MODE, NOTIFY_SETTING = range(7)
@@ -29,12 +40,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     logger.info(f"User {user_id} started bot")
     
-    # Initialize default configs
-    db_utils.set_config('min_confidence', 'medium')
-    db_utils.set_config('pause_after_losses', '3')
-    db_utils.set_config('trading_active', 'true')
-    db_utils.set_config('reinvest_mode', 'off')
-    db_utils.set_config('notification_level', 'all')
+    # Initialize default configs in thread pool
+    await _run_in_thread(db_utils.set_config, 'min_confidence', 'medium')
+    await _run_in_thread(db_utils.set_config, 'pause_after_losses', '3')
+    await _run_in_thread(db_utils.set_config, 'trading_active', 'true')
+    await _run_in_thread(db_utils.set_config, 'reinvest_mode', 'off')
+    await _run_in_thread(db_utils.set_config, 'notification_level', 'all')
     
     welcome_msg = (
         "🔥 **Aggressive Profit Hunter Bot Online**\n\n"
@@ -62,19 +73,19 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show current bot status."""
-    open_trades = db_utils.get_open_trades()
-    all_trades = db_utils.get_trade_history(limit=1000)
+    open_trades = await _run_in_thread(db_utils.get_open_trades)
+    all_trades = await _run_in_thread(db_utils.get_trade_history, limit=1000)
     
     win_count = len([t for t in all_trades if t.get('pnl', 0) > 0])
     total_trades = len(all_trades)
     win_rate = (win_count / total_trades * 100) if total_trades > 0 else 0
     
-    is_paused_raw = db_utils.get_config('trading_active', 'true')
+    is_paused_raw = await _run_in_thread(db_utils.get_config, 'trading_active', 'true')
     is_paused = is_paused_raw.lower() != 'true'
-    pause_reason = db_utils.get_config('pause_reason', '')
+    pause_reason = await _run_in_thread(db_utils.get_config, 'pause_reason', '')
     
-    balance = float(db_utils.get_config('current_balance', '10000'))
-    starting_balance = float(db_utils.get_config('starting_balance', '10000'))
+    balance = float(await _run_in_thread(db_utils.get_config, 'current_balance', '10000'))
+    starting_balance = float(await _run_in_thread(db_utils.get_config, 'starting_balance', '10000'))
     return_pct = ((balance - starting_balance) / starting_balance * 100) if starting_balance > 0 else 0
     
     reporter = Reporter()
@@ -96,8 +107,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Pause the trading loop."""
-    db_utils.set_config('trading_active', 'false')
-    db_utils.set_config('pause_reason', 'Manual pause via /pause command')
+    await _run_in_thread(db_utils.set_config, 'trading_active', 'false')
+    await _run_in_thread(db_utils.set_config, 'pause_reason', 'Manual pause via /pause command')
     msg = "⏸️ Trading loop paused. Use /resume to continue."
     await update.message.reply_text(msg)
     logger.warning("Trading paused")
@@ -105,8 +116,8 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Resume the trading loop."""
-    db_utils.set_config('trading_active', 'true')
-    db_utils.set_config('pause_reason', '')
+    await _run_in_thread(db_utils.set_config, 'trading_active', 'true')
+    await _run_in_thread(db_utils.set_config, 'pause_reason', '')
     msg = "▶️ Trading loop resumed!"
     await update.message.reply_text(msg)
     logger.info("Trading resumed")
@@ -114,7 +125,7 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show recent trade history."""
-    trades = db_utils.get_trade_history(limit=20)
+    trades = await _run_in_thread(db_utils.get_trade_history, limit=20)
     
     if not trades:
         await update.message.reply_text("📭 No trade history yet.")
@@ -135,7 +146,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def cmd_tax(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show tax estimation (FIFO)."""
-    trades = db_utils.get_trade_history(limit=10000)
+    trades = await _run_in_thread(db_utils.get_trade_history, limit=10000)
     
     if not trades:
         await update.message.reply_text("📭 No closed trades for tax calculation.")
@@ -149,7 +160,7 @@ async def cmd_tax(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Force daily/weekly report."""
-    trades = db_utils.get_trade_history(limit=1000)
+    trades = await _run_in_thread(db_utils.get_trade_history, limit=1000)
     today = datetime.now(WAT)
     
     daily_summary = Reporter.calculate_daily_summary(trades, today)
@@ -170,7 +181,7 @@ async def cmd_setconf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     
     conf = context.args[0].lower()
-    db_utils.set_config('min_confidence', conf)
+    await _run_in_thread(db_utils.set_config, 'min_confidence', conf)
     msg = f"✅ AI confidence threshold set to: {conf} (will trade only {conf}+ confidence)"
     await update.message.reply_text(msg)
 
@@ -191,10 +202,10 @@ async def cmd_risk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     }
     
     preset = risk_presets[risk_level]
-    db_utils.set_config('risk_level', risk_level)
-    db_utils.set_config('max_leverage', str(preset['max_lev']))
-    db_utils.set_config('position_size_pct', str(preset['size_pct']))
-    db_utils.set_config('stop_loss_pct', str(preset['stop_loss']))
+    await _run_in_thread(db_utils.set_config, 'risk_level', risk_level)
+    await _run_in_thread(db_utils.set_config, 'max_leverage', str(preset['max_lev']))
+    await _run_in_thread(db_utils.set_config, 'position_size_pct', str(preset['size_pct']))
+    await _run_in_thread(db_utils.set_config, 'stop_loss_pct', str(preset['stop_loss']))
     
     msg = (
         f"⚠️ Risk level set to: {risk_level.upper()} (Main coins only)\n"
@@ -215,7 +226,7 @@ async def cmd_addwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         symbol = symbol.upper()
         if not symbol.endswith(('USDT', 'BUSD')):
             symbol += 'USDT'
-        db_utils.add_watchlist(symbol)
+        await _run_in_thread(db_utils.add_watchlist, symbol)
     
     msg = f"✅ Added to watchlist: {', '.join(context.args)}"
     await update.message.reply_text(msg)
@@ -223,7 +234,7 @@ async def cmd_addwatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def cmd_watchlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show current watchlist."""
-    symbols = db_utils.get_watchlist()
+    symbols = await _run_in_thread(db_utils.get_watchlist)
     
     if not symbols:
         msg = "📭 Watchlist empty. Use /addwatch to add symbols."
@@ -240,7 +251,7 @@ async def cmd_reinvest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     
     mode = context.args[0].lower()
-    db_utils.set_config('reinvest_mode', mode)
+    await _run_in_thread(db_utils.set_config, 'reinvest_mode', mode)
     
     msg = f"🔄 Reinvest mode: {mode.upper()} (50% of profits auto-compound)"
     await update.message.reply_text(msg)
@@ -248,7 +259,7 @@ async def cmd_reinvest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Export trade history as CSV."""
-    trades = db_utils.get_trade_history(limit=10000)
+    trades = await _run_in_thread(db_utils.get_trade_history, limit=10000)
     
     if not trades:
         await update.message.reply_text("📭 No trades to export.")
@@ -375,7 +386,7 @@ async def cmd_simulate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def cmd_high_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Enable max leverage mode with liquidation warning."""
-    db_utils.set_config('max_leverage', '200')
+    await _run_in_thread(db_utils.set_config, 'max_leverage', '200')
     
     msg = (
         "🔥 **MAX LEVERAGE MODE ENABLED**\n\n"
@@ -391,7 +402,7 @@ async def cmd_high_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def cmd_withdraw_profits(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show pending profits for 60% withdrawal to external wallet."""
-    pending_profits = db_utils.get_unwithdrawn_profits()
+    pending_profits = await _run_in_thread(db_utils.get_unwithdrawn_profits)
     withdrawal_amount = pending_profits * 0.60  # 60% to external wallet
     
     if withdrawal_amount < 10:
