@@ -16,6 +16,9 @@ import dotenv
 import db_utils
 from reporter import Reporter
 
+# Import AI functions
+from ai_decision import get_ai_decision
+
 logger = logging.getLogger(__name__)
 
 WAT = pytz.timezone('Africa/Lagos')
@@ -326,6 +329,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/resume - Resume trading loop\n"
         "/kill - Close all + shutdown\n\n"
         
+        "*AI & Signals*\n"
+        "/signals - Get top 3 AI trading signals (long/short)\n\n"
+        
         "*Reports & Analytics*\n"
         "/history - Recent trades\n"
         "/tax - Tax estimate (FIFO, Nigeria)\n"
@@ -336,12 +342,16 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/withdraw - Show 60% profit withdrawal ready to send\n\n"
         
         "*Settings*\n"
+        "/api status - View API key status\n"
+        "/api setbybit <key> <secret> - Set Bybit API keys\n"
+        "/api setgemini <key> - Set Gemini API key\n"
+        "/api setgroq <key> - Set Groq API key\n"
+        "/reinit - Apply API key changes without restart\n"
         "/setconf high/medium/low - AI confidence threshold\n"
         "/risk low/medium/high - Risk presets (now lower defaults)\n"
         "/addwatch [symbols] - Add to watchlist (main coins only)\n"
         "/watchlist - Show watched symbols\n"
-        "/reinvest on/off - 40% profit auto-compound (60% to wallet)\n"
-        "/notify all/trades/alerts/off - Notification level\n\n"
+        "/reinvest on/off - 40% profit auto-compound (60% to wallet)\n\n"
         
         "*Advanced*\n"
         "/simulate [symbol] [long/short] [lev] - Hypothetical P&L\n"
@@ -354,6 +364,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "40% of profits → reinvest in bot\n\n"
         "Test on testnet FIRST!"
     )
+
     
     await update.message.reply_text(help_msg, parse_mode='Markdown')
 
@@ -668,6 +679,117 @@ async def cmd_api_manager(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(
             "❌ Unknown action. Use `/api status` or `/api setbybit|setgemini|setgroq|setcoingecko`"
         )
+
+
+async def cmd_top_signals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: Get top 3 AI trading signals (long/short recommendations) across main coins.
+    Usage: /signals [limit]
+    """
+    user_id = update.effective_user.id
+    owner = os.getenv('OWNER_TELEGRAM_ID')
+    try:
+        owner_id = int(owner) if owner else None
+    except Exception:
+        owner_id = None
+
+    if owner_id is None or user_id != owner_id:
+        await update.message.reply_text("❌ Unauthorized. Only the bot owner can view signals.")
+        return
+
+    limit = 3
+    if context.args and context.args[0].isdigit():
+        limit = int(context.args[0])
+
+    await update.message.reply_text(f"🔍 Scanning {limit} top signals... please wait (~10 sec)")
+
+    try:
+        # Get bot instance to access trader
+        bot_instance = globals().get('BOT_INSTANCE')
+        if not bot_instance or not bot_instance.trader:
+            await update.message.reply_text("❌ Trading engine not available.")
+            return
+
+        # Main coins only
+        main_coins = ['BTC', 'ETH', 'SOL', 'BNB', 'ADA', 'XRP', 'DOGE', 'AVAX', 'POLYGON', 'LINK', 'LTC', 'BCH']
+        
+        signals = []
+        
+        for coin in main_coins[:12]:  # Limit to reduce API load
+            symbol = f"{coin}USDT"
+            try:
+                # Fetch ticker
+                ticker = await bot_instance.trader.get_ticker(symbol)
+                if not ticker:
+                    continue
+                
+                current_price = ticker.get('last', 0)
+                if not current_price:
+                    continue
+                
+                # Get OHLCV for metrics
+                ohlcv = await bot_instance.trader.get_ohlcv(symbol, '1h', limit=20)
+                
+                # Calculate change and volatility
+                open_price = ticker.get('open', current_price)
+                change_24h = ((current_price - open_price) / open_price * 100) if open_price else 0
+                volume_24h = ticker.get('volume', 0)
+                
+                if ohlcv and len(ohlcv) > 1:
+                    highs = [c[2] for c in ohlcv[-14:]]
+                    lows = [c[3] for c in ohlcv[-14:]]
+                    atr = sum([h - l for h, l in zip(highs, lows)]) / len(highs) if highs else current_price * 0.01
+                else:
+                    atr = current_price * 0.01
+                
+                # Get AI decision
+                decision, confidence, reason, sugg_lev, tp, sl = await get_ai_decision(
+                    symbol, current_price, change_24h, volume_24h, atr, 'medium'
+                )
+                
+                if decision and decision != 'no_trade':
+                    # Rank signals by confidence
+                    conf_value = {'high': 3, 'medium': 2, 'low': 1}.get(confidence, 0)
+                    signals.append({
+                        'symbol': symbol,
+                        'decision': decision.upper(),
+                        'confidence': confidence.upper(),
+                        'conf_value': conf_value,
+                        'price': current_price,
+                        'change_24h': change_24h,
+                        'reason': reason[:60] if reason else 'AI decision',
+                        'tp': tp,
+                        'sl': sl,
+                    })
+            
+            except Exception as e:
+                logger.warning(f"Signal scan {symbol}: {e}")
+                continue
+        
+        if not signals:
+            await update.message.reply_text("📭 No strong signals detected at the moment.")
+            return
+        
+        # Sort by confidence, then by absolute change
+        signals.sort(key=lambda s: (s['conf_value'], abs(s['change_24h'])), reverse=True)
+        
+        # Top signals
+        top = signals[:limit]
+        
+        msg = f"🔥 **Top {len(top)} Trading Signals**\n\n"
+        for i, sig in enumerate(top, 1):
+            emoji = "📈" if sig['decision'] == "LONG" else "📉"
+            msg += f"{i}. {emoji} **{sig['symbol']}** {sig['decision']}\n"
+            msg += f"   Confidence: {sig['confidence']} | Price: ${sig['price']:.2f}\n"
+            msg += f"   24h: {sig['change_24h']:+.1f}% | TP: {sig['tp']:+.0f}% | SL: {sig['sl']:+.0f}%\n"
+            msg += f"   {sig['reason']}\n\n"
+        
+        msg += "/trade [symbol] to open, /pause to stop, /api status to check keys"
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        logger.info(f"Top {limit} signals generated: {[s['symbol'] for s in top]}")
+    
+    except Exception as e:
+        logger.error(f"Signal generation error: {e}")
+        await update.message.reply_text(f"❌ Signal scan failed: {e}")
 
 
 async def cmd_reinit_trader(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
