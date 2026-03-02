@@ -332,7 +332,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "*Mode Control*\n"
         "/papermode - Switch to paper (simulated trades)\n"
         "/livemode - Switch to live (real money ⚠️)\n"
-        "/confirm_live - Confirm live mode switchover\n\n"
+        "/confirm_live - Confirm live mode switchover\n"
+        "/env - Show current environment variable status\n\n"
         
         "*AI & Signals*\n"
         "/signals - Get top 3 AI trading signals (long/short)\n\n"
@@ -799,6 +800,42 @@ async def cmd_confirm_livemode(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error("⚠️ BOT SWITCHED TO LIVE MODE BY OWNER - REAL MONEY TRADING ACTIVE")
     except Exception as e:
         await update.message.reply_text(f"❌ Failed: {e}")
+
+
+async def cmd_show_env(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only: display relevant environment variable statuses (keys masked)."""
+    user_id = update.effective_user.id
+    owner = os.getenv('OWNER_TELEGRAM_ID')
+    try:
+        owner_id = int(owner) if owner else None
+    except Exception:
+        owner_id = None
+
+    if owner_id is None or user_id != owner_id:
+        await update.message.reply_text("❌ Unauthorized. Only owner can view env.")
+        return
+
+    def mask(val: str) -> str:
+        if not val:
+            return '❌ NOT SET'
+        if len(val) <= 6:
+            return '*****'
+        return val[:3] + '...' + val[-3:]
+
+    env_keys = [
+        ('TELEGRAM_TOKEN', mask(os.getenv('TELEGRAM_TOKEN', ''))),
+        ('OWNER_TELEGRAM_ID', os.getenv('OWNER_TELEGRAM_ID', '')),
+        ('GEMINI_API_KEY', mask(os.getenv('GEMINI_API_KEY', ''))),
+        ('GROQ_API_KEY', mask(os.getenv('GROQ_API_KEY', ''))),
+        ('BYBIT_API_KEY', mask(os.getenv('BYBIT_API_KEY', ''))),
+        ('BYBIT_API_SECRET', mask(os.getenv('BYBIT_API_SECRET', ''))),
+        ('COINGECKO_API_URL', os.getenv('COINGECKO_API_URL', '')),
+        ('PAPER_MODE', os.getenv('PAPER_MODE', '')),
+    ]
+    msg = "🔐 **Env vars status**\n\n"
+    for k, v in env_keys:
+        msg += f"{k}: {v}\n"
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
 
 async def cmd_top_signals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -575,6 +575,7 @@ async def setup_telegram_handlers(app: Application) -> None:
     app.add_handler(CommandHandler('papermode', commands.cmd_papermode))
     app.add_handler(CommandHandler('livemode', commands.cmd_livemode))
     app.add_handler(CommandHandler('confirm_live', commands.cmd_confirm_livemode))
+    app.add_handler(CommandHandler('env', commands.cmd_show_env))
     app.add_handler(CommandHandler('signals', commands.cmd_top_signals))
     app.add_handler(CommandHandler('addwatch', commands.cmd_addwatch))
     app.add_handler(CommandHandler('watchlist', commands.cmd_watchlist))
