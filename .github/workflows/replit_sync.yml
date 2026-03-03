@@ -1,0 +1,34 @@
+name: Sync Replit Secrets
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  upload-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm install -g @replit/replit-cli
+      - name: Login to Replit CLI
+        env:
+          REPLIT_TOKEN: ${{ secrets.REPLIT_TOKEN }}
+        run: |
+          if [ -n "$REPLIT_TOKEN" ]; then
+            echo "$REPLIT_TOKEN" | replit login --token
+          else
+            echo "No REPLIT_TOKEN secret provided - skipping login"
+          fi
+      - name: Upload secrets to Replit
+        env:
+          REPLIT_TOKEN: ${{ secrets.REPLIT_TOKEN }}
+        run: |
+          python scripts/upload_replit_secrets.py

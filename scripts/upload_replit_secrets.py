@@ -54,6 +54,11 @@ def main():
     if not env:
         return
     print("Uploading secrets to Replit (requires `replit` CLI and login)...")
+    # allow non-interactive login via token if provided
+    token = os.getenv('REPLIT_TOKEN')
+    if token:
+        print("Logging in with REPLIT_TOKEN...")
+        subprocess.run(['replit', 'login', '--token', token], check=False)
     for key in KEYS:
         val = env.get(key, '')
         if not val:
